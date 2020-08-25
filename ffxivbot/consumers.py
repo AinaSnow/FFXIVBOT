@@ -17,7 +17,6 @@ from FFXIV import settings
 import ffxivbot.handlers as handlers
 from ffxivbot.models import *
 import time
-import pymysql
 import os
 import re
 import pytz
@@ -31,7 +30,9 @@ from channels.exceptions import StopConsumer
 from django.db import transaction
 
 channel_layer = get_channel_layer()
-logging.basicConfig(format="%(levelname)s:%(message)s", level=logging.ERROR)
+logging.basicConfig(
+    format="%(levelname)s:%(asctime)s:%(name)s:%(message)s", level=logging.INFO
+)
 LOGGER = logging.getLogger(__name__)
 FFXIVBOT_ROOT = os.environ.get("FFXIVBOT_ROOT", settings.BASE_DIR)
 CONFIG_PATH = os.environ.get(
@@ -39,11 +40,10 @@ CONFIG_PATH = os.environ.get(
 )
 
 
-
-
 class PikaPublisher:
     def __init__(self, username="guest", password="guest", queue="ffxivbot"):
         # print("initializing pika publisher")
+        # traceback.print_stack()
         self.credentials = pika.PlainCredentials(username, password)
         self.queue = queue
         self.parameters = pika.ConnectionParameters(
@@ -77,7 +77,9 @@ class PikaPublisher:
     def ping(self):
         self.connection.process_data_events()
 
+
 # PUB = PikaPublisher()
+
 
 class WSConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -92,16 +94,30 @@ class WSConsumer(AsyncWebsocketConsumer):
             pass
         try:
             ws_self_id = headers["x-self-id"]
-            ws_client_role = headers["x-client-role"]
-            ws_access_token = headers.get("authorization", "empty_access_token").replace("Token", "").strip()
+            # ws_client_role = headers["x-client-role"]
+            ws_access_token = (
+                headers.get("authorization", "empty_access_token")
+                .replace("Token", "")
+                .strip()
+            )
             client_role = headers["x-client-role"]
             user_agent = headers["user-agent"]
             if client_role != "Universal":
-                LOGGER.error("Uknown client_role: {}".format(client_role))
-                await self.accept()
-            if "CQHttp" not in user_agent:
-                LOGGER.error("Uknown user_agent: {}".format(user_agent))
-                await self.accept()
+                LOGGER.error("Unkown client_role: {}".format(client_role))
+                # await self.close()
+                return
+            if "CQHttp" not in user_agent and "MiraiHttp" not in user_agent:
+                LOGGER.error(
+                    "Unknown user_agent: {} for {}".format(user_agent, ws_self_id)
+                )
+                return
+            elif "CQHttp" in user_agent:
+                version = user_agent.replace("CQHttp/", "").split(".")
+                if version < "4.14.1".split("."):
+                    LOGGER.error(
+                        "Unsupport user_agent: {} for {}".format(user_agent, ws_self_id)
+                    )
+                    return
 
             bot = None
             # with transaction.atomic():
@@ -129,27 +145,40 @@ class WSConsumer(AsyncWebsocketConsumer):
             LOGGER.error(
                 "%s:%s:API:AUTH_FAIL from %s" % (ws_self_id, ws_access_token, true_ip)
             )
-            await self.close()
-        except Exception as e:
+            # await self.close()
+        except:
             LOGGER.error("Unauthed connection from %s" % (true_ip))
             LOGGER.error(headers)
             traceback.print_exc()
-            await self.close()
+            # await self.close()
 
     async def disconnect(self, close_code):
         try:
-            self.pub.exit()
-            LOGGER.debug(
-                "Universal Channel disconnect from {} by channel:{} {}s".format(
+            # self.pub.exit()
+            disconnect = json.loads(self.bot.disconnections)
+            cur_time = int(time.time())
+            disconnect_from_last_hour = []
+            for dis in disconnect:
+                if dis >= cur_time - 3600:
+                    disconnect_from_last_hour.append(dis)
+            disconnect_from_last_hour.append(cur_time)
+            disconnect = disconnect_from_last_hour
+            while len(disconnect) > 100:
+                disconnect = disconnect[1:]
+            self.bot.disconnections = json.dumps(disconnect)
+            self.bot.save(update_fields=["disconnections"])
+            LOGGER.info(
+                "Universal Channel disconnect from {} by channel:{} Live for {}s, {} disconnections".format(
                     self.bot.user_id,
                     self.channel_name,
-                    int(time.time()) - int(self.bot.api_time),
+                    int(time.time()) - int(self.bot.event_time),
+                    len(disconnect),
                 )
             )
             gc.collect()
         except BaseException:
             pass
-        raise StopConsumer
+        # raise StopConsumer
 
     async def receive(self, text_data):
         # try:
@@ -165,7 +194,6 @@ class WSConsumer(AsyncWebsocketConsumer):
             self.bot.event_time = int(time.time())
             self.bot.save(update_fields=["event_time"])
             self.config = json.load(open(CONFIG_PATH, encoding="utf-8"))
-            already_reply = False
             try:
                 receive = json.loads(text_data)
                 if (
@@ -194,19 +222,22 @@ class WSConsumer(AsyncWebsocketConsumer):
                     # except BaseException:
                     #     traceback.print_exc()
                     match_prefix = ["/", "\\", "[CQ:at,qq={}]".format(self_id)]
-                    push_to_mq = any([receive["message"].startswith(x) for x in match_prefix])
-                    if push_to_mq and "group_id" in receive:
+                    push_to_mq = any(
+                        [receive["message"].startswith(x) for x in match_prefix]
+                    )
+                    if "group_id" in receive:
                         priority += 1
                         group_id = receive["group_id"]
                         (group, group_created) = QQGroup.objects.get_or_create(
                             group_id=group_id
                         )
-                        push_to_mq = push_to_mq or "[CQ:at,qq={}]".format(self_id) in receive[
-                            "message"
-                        ] or (
-                            (group.repeat_ban > 0)
-                            or (group.repeat_length > 1 and group.repeat_prob > 0)
-                        )
+                        # push_to_mq = (
+                        #     push_to_mq
+                        #     or (
+                        #         (group.repeat_ban > 0)
+                        #         or (group.repeat_length > 1 and group.repeat_prob > 0)
+                        #     )
+                        # )
                         group_bots = json.loads(group.bots)
                         if group_bots and (str(self_id) not in group_bots):
                             push_to_mq = False
@@ -221,8 +252,10 @@ class WSConsumer(AsyncWebsocketConsumer):
                 if receive["post_type"] == "request" or receive["post_type"] == "event":
                     priority = 3
                     self.pub.send(text_data, priority)
-
             except Exception as e:
+                LOGGER.error(
+                    "Error {} while handling message {}".format(type(e), text_data)
+                )
                 traceback.print_exc()
             # self.bot.save()
         else:
@@ -233,10 +266,10 @@ class WSConsumer(AsyncWebsocketConsumer):
                     LOGGER.warning("API waring:" + text_data)
                 else:
                     LOGGER.error("API error:" + text_data)
-            if "echo" in receive.keys():
+            if "echo" in receive.keys() and receive["echo"] is not None:
                 echo = receive["echo"]
                 LOGGER.debug("echo:{} received".format(receive["echo"]))
-                if echo.find("get_group_member_list") == 0:
+                if "get_group_member_list" in echo:
                     group_id = echo.replace("get_group_member_list:", "").strip()
                     try:
                         # group = QQGroup.objects.select_for_update().get(group_id=group_id)
@@ -251,17 +284,16 @@ class WSConsumer(AsyncWebsocketConsumer):
                         LOGGER.error("QQGroup.DoesNotExist:{}".format(group_id))
                         return
                     LOGGER.debug("group %s member updated" % (group.group_id))
-                if echo.find("get_group_list") == 0:
+                if "get_group_list" in echo:
                     self.bot.group_list = json.dumps(receive["data"])
                     self.bot.save(update_fields=["group_list"])
-                if echo.find("_get_friend_list") == 0:
-                    # friend_list = echo.replace("_get_friend_list:","").strip()
+                if "get_friend_list" in echo:
                     self.bot.friend_list = json.dumps(receive["data"])
                     self.bot.save(update_fields=["friend_list"])
-                if echo.find("get_version_info") == 0:
+                if "get_version_info" in echo:
                     self.bot.version_info = json.dumps(receive["data"])
                     self.bot.save(update_fields=["version_info"])
-                if echo.find("get_status") == 0:
+                if "get_status" in echo:
                     user_id = echo.split(":")[1]
                     if not receive["data"] or not receive["data"]["good"]:
                         LOGGER.error(
@@ -285,10 +317,10 @@ class WSConsumer(AsyncWebsocketConsumer):
         )
         if "[CQ:at,qq=306401806]" in json.dumps(event):
             LOGGER.info(
-                        "Universal Channel {} send_event with event:{}".format(
-                            self.channel_name, json.dumps(event)
-                        )
-                    )
+                "Universal Channel {} send_event with event:{}".format(
+                    self.channel_name, json.dumps(event)
+                )
+            )
         await self.send(event["text"])
 
     async def call_api(self, action, params, echo=None):

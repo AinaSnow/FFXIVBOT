@@ -17,7 +17,6 @@ FFXIVBOT_ROOT = os.environ.get("FFXIVBOT_ROOT", settings.BASE_DIR)
 CONFIG_PATH = os.environ.get(
     "FFXIVBOT_CONFIG", os.path.join(FFXIVBOT_ROOT, "ffxivbot/config.json")
 )
-pub = PikaPublisher()
 logging.basicConfig(format="%(levelname)s:%(message)s", level=logging.DEBUG)
 LOGGER = logging.getLogger(__name__)
 
@@ -31,6 +30,9 @@ def qqpost(req):
         receive["reply_api_type"] = "http"
         text_data = json.dumps(receive)
         self_id = received_sig = req.META.get("HTTP_X_SELF_ID", "NULL")
+        # print("=============")
+        # print(self_id)
+        # print("=============")
         error_msg = "Request not handled"
         try:
             bot = QQBot.objects.get(user_id=self_id)
@@ -42,6 +44,7 @@ def qqpost(req):
             # print("bot {} does not provide api url".format(self_id))
             error_msg = "Bot {} does not provide api url".format(self_id)
         else:
+            pub = PikaPublisher()
             sig = hmac.new(str(bot.access_token).encode(), req.body, 'sha1').hexdigest()
             received_sig = req.META.get("HTTP_X_SIGNATURE", "NULL")[len('sha1='):]
             # print(req.META)

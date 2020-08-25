@@ -15,7 +15,8 @@ import datetime
 import pytz
 import re
 import json
-import pymysql
+
+# import pymysql
 import time
 from time import strftime, localtime
 from ffxivbot.models import *
@@ -89,7 +90,9 @@ def webapi(req):
                             "rcode": "1002",
                         }
                 else:
-                    times = getFollowingWeathers(territory, length, TIMEFORMAT_MDHMS, unixSeconds = time.time())
+                    times = getFollowingWeathers(
+                        territory, length, TIMEFORMAT_MDHMS, unixSeconds=time.time()
+                    )
                     res_dict = {
                         "response": "success",
                         "msg": "",
@@ -261,15 +264,15 @@ def github_webhook(req):
     elif event_type == "ping":
         msg = req_json.get("zen", "Hello from github")
     elif event_type == "push":
-        pusher = req_json.get("pusher").get("name")
+        pusher = req_json.get("pusher")
         repo = req_json.get("repository")
         msg = "New push to {}:\n".format(repo.get("full_name"))
-        msg += "Pusher: {}\n".format(pusher)
+        msg += "Pusher: {}\n".format(pusher.get("name") or pusher.get("username"))
         msg += "Ref: {}\n".format(req_json.get("ref"))
         msg += "Commits:\n"
         for commit in req_json.get("commits"):
             msg += "  {}: {}\n".format(commit["id"][:7], commit["message"])
-        msg += "Check at {}".format(req_json.get("compare"))
+        msg += "Check at {}".format(req_json.get("compare") or req_json.get("compare_url"))
     elif event_type == "pull_request":
         action = req_json.get("action")
         number = req_json.get("number")
@@ -277,11 +280,15 @@ def github_webhook(req):
         repo = req_json.get("repository")
         pusher = pr.get("user").get("login")
         if action == "opened":
-            msg = "{} opened a new pull request to {}:\n".format(pusher, repo.get("full_name"))
+            msg = "{} opened a new pull request to {}:\n".format(
+                pusher, repo.get("full_name")
+            )
             msg += "#{}:{}\n".format(number, pr.get("title"))
         else:
-            msg += "{} {} PR#{}:{}, state changed to {}.\n".format(pusher, action, number, pr.get("title"), pr.get("state"))
-        msg += "Check at {}\n".format(pr.get("url"))
+            msg += "{} {} PR#{}:{}, state changed to {}.\n".format(
+                pusher, action, number, pr.get("title"), pr.get("state")
+            )
+        msg += "Check at {}\n".format(pr.get("html_url"))
     elif event_type == "star":
         action = req_json.get("action")
         sender = req_json.get("sender")
@@ -289,7 +296,9 @@ def github_webhook(req):
         if action == "created":
             msg = "{} stared {}".format(sender.get("login"), repo.get("full_name"))
         elif action == "deleted":
-            msg = "{} canceled star of {}".format(sender.get("login"), repo.get("full_name"))
+            msg = "{} canceled star of {}".format(
+                sender.get("login"), repo.get("full_name")
+            )
     elif event_type == "issues":
         action = req_json.get("action")
         issue = req_json.get("issue")
@@ -300,20 +309,28 @@ def github_webhook(req):
             msg = "{} opened a new issue to {}:\n".format(pusher, repo.get("full_name"))
             msg += "#{}:{}\n".format(number, issue.get("title"))
         else:
-            msg += "{} {} issue#{}:{}, state changed to {}.\n".format(pusher, action, number, issue.get("title"), issue.get("state"))
-        msg += "Check at {}\n".format(issue.get("url"))
+            msg += "{} {} issue#{}:{}, state changed to {}.\n".format(
+                pusher, action, number, issue.get("title"), issue.get("state")
+            )
+        msg += "Check at {}\n".format(issue.get("html_url"))
     elif event_type == "fork":
         forkee = req_json.get("forkee")
         repo = req_json.get("repository")
-        msg = "{} forked {} to {}".format(forkee.get("owner").get("login"), repo.get("full_name"), forkee.get("full_name"))
+        msg = "{} forked {} to {}".format(
+            forkee.get("owner").get("login"),
+            repo.get("full_name"),
+            forkee.get("full_name"),
+        )
     elif event_type == "gollum":
         pages = req_json.get("pages")
         sender = req_json.get("sender")
         repo = req_json.get("repository")
-        msg = "{} updated wiki pages of {}:\n".format(sender.get("login"), repo.get("full_name"))
+        msg = "{} updated wiki pages of {}:\n".format(
+            sender.get("login"), repo.get("full_name")
+        )
         for page in pages:
             msg += "{}:{}\n".format(page.get("page_name"), page.get("html_url"))
         msg = msg.strip()
     else:
-        msg = "Github event \"{}\" is not implemented.".format(event_type)
+        msg = 'Github event "{}" is not implemented.'.format(event_type)
     return msg

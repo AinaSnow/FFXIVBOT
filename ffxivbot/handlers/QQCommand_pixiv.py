@@ -11,11 +11,13 @@ import logging
 import time
 import traceback
 
+
 def revproxy(url):
     original_domain = "i.pximg.net"
     revproxy_domain = "pixiv.bluefissure.com"
     rev_url = url.replace(original_domain, revproxy_domain)
     return rev_url.replace("_webp", "")
+
 
 def is_nsfw(illust):
     if int(illust["x_restrict"]) != 0:
@@ -111,7 +113,7 @@ def search_ID(ID):
     else:
         illust = jres["illust"]
         img_url = illust["image_urls"]["large"]
-        msg = "[CQ:image,file={},cache=0]".format(revproxy(img_url))
+        msg = "[CQ:image,file={}]".format(revproxy(img_url))
     return msg
 
 
@@ -140,10 +142,12 @@ def QQCommand_pixiv(*args, **kwargs):
         FF14WIKI_API_URL = global_config["FF14WIKI_API_URL"]
         FF14WIKI_BASE_URL = global_config["FF14WIKI_BASE_URL"]
         receive = kwargs["receive"]
+        user = QQUser.objects.get(user_id=receive["user_id"])
 
-        if time.time() < bot.api_time + bot.long_query_interval:
-            msg = "技能冷却中"
+        if time.time() < user.last_api_time + 15:
+            msg = "[CQ:at,qq={}] 技能冷却中".format(user)
         else:
+            update_api_cooldown = False
             message_content = receive["message"].replace("/pixiv", "", 1).strip()
             msg = "default msg"
             if message_content.find("help") == 0 or message_content == "":
@@ -161,12 +165,15 @@ def QQCommand_pixiv(*args, **kwargs):
                 if mode == "":
                     mode = "week"
                 msg = search_rank(mode, receive["message_type"] != "group")
+                update_api_cooldown = True
             elif message_content.find("gif") == 0:
                 ID = message_content.replace("gif", "", 1).strip()
                 msg = search_gif_ID(ID)
+                update_api_cooldown = True
             elif str.isdecimal(message_content):
                 ID = int(message_content)
                 msg = search_ID(ID)
+                update_api_cooldown = True
             elif "CQ" in message_content and "url=" in message_content:
                 # print("matching image:{}".format(message_content))
                 tmp = message_content
@@ -174,11 +181,14 @@ def QQCommand_pixiv(*args, **kwargs):
                 tmp = tmp.replace("url=", "")
                 img_url = tmp.replace("]", "")
                 msg = search_image(img_url, receive["user_id"])
-
+                update_api_cooldown = True
             else:
                 word = message_content
                 msg = search_word(word, receive["message_type"] != "group")
-
+                update_api_cooldown = True
+            if update_api_cooldown:
+                user.last_api_time = time.time()
+                user.save(update_fields=["last_api_time"])
         if isinstance(msg, str):
             msg = msg.strip()
         reply_action = reply_message_action(receive, msg)
